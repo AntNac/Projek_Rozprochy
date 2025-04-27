@@ -1,6 +1,8 @@
 import socket
 from _thread import *
 import random
+import math
+from box import *
 
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 server = 'localhost'
@@ -16,58 +18,65 @@ except socket.error as e:
 s.listen(2)
 print("Waiting for a connection")
 
-boxes = []  # Lista boxów
+boxes = []
+players_level = [1, 1]
 
 def generate_boxes():
     global boxes
-    for _ in range(10):
+    for i in range(10):
         x = random.randint(0, 1920)
         y = random.randint(0, 1080)
-        boxes.append((x, y, 20))
+        boxes.append(Box(i, x, y,20))
 
 if len(boxes) == 0:
     generate_boxes()
 
 currentId = "0"
-pos = ["0:50,50,1,0,0,0,100|", "1:100,100,1,0,0,0,100|"]
+pos = ["0:50,50,1,0,0,0,100||", "1:100,100,1,0,0,0,100||"]
 
-
-def threaded_client(conn):
-    global currentId, pos
+def threaded_client(conn, player_id):
+    global currentId, pos, boxes
     conn.send(str.encode(currentId))
     currentId = "1"
-    reply = ''
+
     while True:
         try:
-            data = conn.recv(2048)
+            data = conn.recv(4096)
             if not data:
                 print("Client disconnected")
-                conn.send(str.encode("Goodbye"))
                 break
-            else:
-                reply = data.decode('utf-8')
-                print("Received: " + reply)
-                arr = reply.split(":")
-                id = int(arr[0])
 
-                pos[id] = reply
+            reply = data.decode('utf-8')
+            arr = reply.split(":")
+            id = int(arr[0])
 
-                if id == 0: nid = 1
-                if id == 1: nid = 0
+            pos[id] = reply
 
-                reply = pos[nid][:]
+            if id == 0: nid = 1
+            if id == 1: nid = 0
 
-                boxes_reply = ""
-                for box in boxes:
-                    boxes_reply += f"{box[0]},{box[1]},{box[2]};"
+            main_data, boxes_data = reply.split("#")
+            player_info, bullet_info, hitbox_info = main_data.split("|")
+            if hitbox_info:
+                for box_id_str in hitbox_info.split(";"):
+                    if box_id_str:
+                        box_id = int(box_id_str)
+                        for box in boxes:
+                            if box.id == box_id and box.hp > 0:
+                                destroyed = box.get_hit(5)
+                                if destroyed:
+                                    players_level[id] += 1
+                                break
 
+            boxes = [box for box in boxes if box.hp > 0]
 
-                if "#" not in reply:
-                    reply += "#" + boxes_reply
+            other_player_data = pos[nid].split("#")[0]
+            new_reply = other_player_data + "#"
+            for box in boxes:
+                new_reply += f"{box.id},{box.x},{box.y},{box.hp};"
 
-                print(f"Sending: {len(boxes)} boxes, {reply}")
-
-                conn.sendall(str.encode(reply))
+            print(f"Sending: {len(boxes)} boxes")
+            conn.sendall(str.encode(new_reply))
         except socket.error as e:
             print(f"Socket error: {e}")
             break
@@ -75,9 +84,7 @@ def threaded_client(conn):
     print("Connection Closed")
     conn.close()
 
-
 while True:
     conn, addr = s.accept()
-    print("Connected to: ", addr)
-
-    start_new_thread(threaded_client, (conn,))
+    print("Connected to:", addr)
+    start_new_thread(threaded_client, (conn, int(currentId)))
